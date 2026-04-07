@@ -1,0 +1,23 @@
+package com.salat.commonconst
+
+const val RECORDS_ROOT_DIRECTORY_NAME = "_CamRecords"
+const val STORAGE_CHECK_INTERVAL_MS = 120_000L
+const val STORAGE_CHECK_INITIAL_DELAY_MS = 30_000L
+const val MIN_FREE_SPACE_RATIO = 0.10
+const val TARGET_FREE_SPACE_RATIO = 0.12
+
+const val BASE_FRAME_RATE = 24
+
+const val MAX_VIDEO_WIDTH = 1_280
+const val MAX_VIDEO_HEIGHT = 720
+const val PIXELS_720P = 1_280 * 720
+const val PIXELS_576P = 1_024 * 576
+
+const val VIDEO_BITRATE_720P = 3_400_000 // 4_000_000 base
+const val VIDEO_BITRATE_576P = 2_550_000 // 3_000_000 base
+const val VIDEO_BITRATE_480P = 1_700_000 // 2_000_000 base
+
+const val SEGMENT_DURATION_MS = 120_000L // 60_000L base
+const val RECORDER_START_ATTEMPTS = 2
+const val RECORDER_RETRY_DELAY_MS = 200L
+const val BROKEN_FILE_DELETE_THRESHOLD_BYTES = 2_048L

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_label" translatable="false">Cam Recorder</string>
+
+    <string name="preview_status_waiting_action">Awaiting action</string>
+    <string name="preview_status_waiting_ignition">Awaiting ignition</string>
+    <string name="preview_status_off">Off</string>
+    <string name="preview_status_recording">Recording</string>
+    <string name="preview_warning_no_file_access">No file access</string>
+    <string name="preview_warning_insert_usb">Insert a USB drive</string>
+    <string name="preview_warning_no_camera_access">No camera access</string>
+    <string name="preview_warning_no_accessibility_service">Accessibility service has no access</string>
+    <string name="preview_switch_enable_title">Enable</string>
+    <string name="preview_switch_enable_subtitle_on">Recording enabled</string>
+    <string name="preview_switch_enable_subtitle_off">Recording disabled</string>
+    <string name="preview_switch_ignition_title">Record when ignition is on</string>
+    <string name="preview_switch_ignition_subtitle_ignition_only">Only when ignition is on</string>
+    <string name="preview_switch_ignition_subtitle_always">Independent of ignition</string>
+</resources>

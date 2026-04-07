@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="preview_status_waiting_action">Ожидает действия</string>
+    <string name="preview_status_waiting_ignition">Ожидает зажигания</string>
+    <string name="preview_status_off">Выключено</string>
+    <string name="preview_status_recording">Идёт запись</string>
+    <string name="preview_warning_no_file_access">Нет доступа к файлам</string>
+    <string name="preview_warning_insert_usb">Вставьте флешку</string>
+    <string name="preview_warning_no_camera_access">Нет доступа к камерам</string>
+    <string name="preview_warning_no_accessibility_service">Нет доступа у сервиса</string>
+    <string name="preview_switch_enable_title">Включить</string>
+    <string name="preview_switch_enable_subtitle_on">Запись включена</string>
+    <string name="preview_switch_enable_subtitle_off">Запись выключена</string>
+    <string name="preview_switch_ignition_title">Запись по зажиганию</string>
+    <string name="preview_switch_ignition_subtitle_ignition_only">Только при включённом зажигании</string>
+    <string name="preview_switch_ignition_subtitle_always">Независимо от зажигания</string>
+</resources>
