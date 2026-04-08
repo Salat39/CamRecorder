@@ -14,4 +14,5 @@
     <string name="preview_switch_ignition_title">Запись по зажиганию</string>
     <string name="preview_switch_ignition_subtitle_ignition_only">Только при включённом зажигании</string>
     <string name="preview_switch_ignition_subtitle_always">Независимо от зажигания</string>
+    <string name="available_cameras">Доступные камеры</string>
 </resources>

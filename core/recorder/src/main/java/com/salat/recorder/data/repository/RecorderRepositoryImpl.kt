@@ -1,7 +1,10 @@
 package com.salat.recorder.data.repository
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.ImageFormat
+import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -23,6 +26,7 @@ import android.os.storage.StorageManager
 import android.util.Range
 import android.util.Size
 import android.view.Surface
+import androidx.core.content.ContextCompat
 import com.salat.carapi.domain.repository.CarApiRepository
 import com.salat.commonconst.BASE_FRAME_RATE
 import com.salat.commonconst.BROKEN_FILE_DELETE_THRESHOLD_BYTES
@@ -66,6 +70,9 @@ import com.salat.recorder.data.utils.deleteEmptyDirectoriesUpwards
 import com.salat.recorder.data.utils.logCameraCapabilities
 import com.salat.recorder.data.utils.segmentGroupKeyOrNull
 import com.salat.recorder.data.utils.supportsSurfaceInput
+import com.salat.recorder.domain.entity.AvailableCameraFpsRange
+import com.salat.recorder.domain.entity.AvailableCameraInfo
+import com.salat.recorder.domain.entity.AvailableCameraSize
 import com.salat.recorder.domain.repository.RecorderRepository
 import java.io.File
 import java.io.IOException
@@ -95,6 +102,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
@@ -1389,4 +1397,107 @@ class RecorderRepositoryImpl(
             }
         }.distinctBy { it.width to it.height }
     }
+
+    // Collect cameras info
+    override suspend fun getAvailableCameraInfos(): List<AvailableCameraInfo> = withContext(Dispatchers.IO) {
+        readAvailableCameraInfos(cameraManager)
+    }
+
+    private fun readAvailableCameraInfos(cameraManager: CameraManager): List<AvailableCameraInfo> {
+        val cameraIds = runCatching { cameraManager.cameraIdList.toList() }
+            .getOrElse {
+                Timber.w(it, "Unable to read cameraIdList for available camera info")
+                return emptyList()
+            }
+
+        return cameraIds.mapNotNull { cameraId ->
+            runCatching {
+                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                val configurationMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+
+                val orderedPreviewSizes = configurationMap?.let { orderVideoSizes(collectPreviewSizes(it)) }.orEmpty()
+                val orderedVideoSizes = configurationMap?.let { orderVideoSizes(collectVideoSizes(it)) }.orEmpty()
+                val recordingProfile = configurationMap?.let { resolveRecordingProfile(characteristics, it) }
+                val activeArray = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
+                    ?.toList()
+                    .orEmpty()
+
+                val defaultVideoSize = recordingProfile?.videoSize?.toAvailableCameraSize()
+                    ?: orderedVideoSizes.firstOrNull()?.toAvailableCameraSize()
+
+                val defaultPreviewSize = recordingProfile?.videoSize
+                    ?.takeIf { preferred ->
+                        orderedPreviewSizes.any { it.width == preferred.width && it.height == preferred.height }
+                    }
+                    ?.toAvailableCameraSize()
+                    ?: orderedPreviewSizes.firstOrNull()?.toAvailableCameraSize()
+                    ?: defaultVideoSize
+
+                AvailableCameraInfo(
+                    cameraId = cameraId,
+                    lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING),
+                    sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION),
+                    hardwareLevel = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL),
+                    isLogicalMultiCamera = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        capabilities.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
+                    } else {
+                        false
+                    },
+                    physicalCameraIds = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        characteristics.physicalCameraIds.toList()
+                    } else {
+                        emptyList()
+                    },
+                    activeArraySize = activeArray?.let { AvailableCameraSize(it.width(), it.height()) },
+                    defaultPreviewSize = defaultPreviewSize,
+                    previewSizes = orderedPreviewSizes.map { it.toAvailableCameraSize() },
+                    defaultVideoSize = defaultVideoSize,
+                    videoSizes = orderedVideoSizes.map { it.toAvailableCameraSize() },
+                    targetFrameRate = recordingProfile?.fpsSelection?.frameRate,
+                    targetFpsRange = recordingProfile?.fpsSelection?.range?.toAvailableCameraFpsRange(),
+                    capabilities = capabilities,
+                )
+            }.onFailure { throwable ->
+                Timber.w(throwable, "Unable to read available camera info for cameraId=%s", cameraId)
+            }.getOrNull()
+        }
+    }
+
+    private fun collectPreviewSizes(configurationMap: StreamConfigurationMap): List<Size> {
+        return buildList {
+            addAll(
+                runCatching { configurationMap.getOutputSizes(SurfaceTexture::class.java) }
+                    .getOrNull()
+                    .orEmpty()
+                    .asList()
+            )
+            addAll(
+                runCatching { configurationMap.getOutputSizes(Surface::class.java) }
+                    .getOrNull()
+                    .orEmpty()
+                    .asList()
+            )
+        }.distinctBy { it.width to it.height }
+    }
+
+    private fun Size.toAvailableCameraSize(): AvailableCameraSize {
+        return AvailableCameraSize(
+            width = width,
+            height = height,
+        )
+    }
+
+    private fun Range<Int>.toAvailableCameraFpsRange(): AvailableCameraFpsRange {
+        return AvailableCameraFpsRange(
+            min = lower,
+            max = upper,
+        )
+    }
+
+    override val hasCameraPermission: Boolean
+        get() = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA,
+        ) == PackageManager.PERMISSION_GRANTED
 }

@@ -16,4 +16,5 @@
     <string name="preview_switch_ignition_title">Record when ignition is on</string>
     <string name="preview_switch_ignition_subtitle_ignition_only">Only when ignition is on</string>
     <string name="preview_switch_ignition_subtitle_always">Independent of ignition</string>
+    <string name="available_cameras">Available cameras</string>
 </resources>

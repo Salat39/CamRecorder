@@ -24,6 +24,7 @@ dependencies {
     implementation(project(Modules.CORE_SHARED_EVENTS))
     implementation(project(Modules.CORE_PREFERENCES))
     implementation(project(Modules.CORE_DRIVE_STORAGE))
+    implementation(project(Modules.CORE_RECORDER))
     implementation(project(Modules.CORE_CAR_API))
 
     implementation(libs.androidx.core.ktx)

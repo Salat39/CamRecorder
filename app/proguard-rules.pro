@@ -59,4 +59,4 @@
 -keepclassmembers class com.salat.carapi.data.entity.CarPropertyValue { public void registerIntFunction(...); }
 -keepattributes *Annotation*
 # На всякий: выключить агрессивный inlining этого метода
--assumenosideeffects class com.salat.carapi.data.entity.CarPropertyValue { *; }
+# -assumenosideeffects class com.salat.carapi.data.entity.CarPropertyValue { *; }
