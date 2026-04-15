@@ -13,6 +13,8 @@ android {
 
 dependencies {
     implementation(project(Modules.FEATURE_PREVIEW))
+    implementation(project(Modules.FEATURE_SETTINGS))
+    implementation(project(Modules.FEATURE_ARCHIVE))
 
     implementation(libs.androidx.animation.android)
     testImplementation(libs.junit)

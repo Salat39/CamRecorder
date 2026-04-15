@@ -3,10 +3,12 @@ package com.salat.preview.presentation
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.viewModelScope
 import com.salat.carapi.domain.usecases.GetIgnitionUseCase
+import com.salat.commonconst.MAX_CAMERA_COUNT
 import com.salat.drivestorage.domain.usecases.DriveConnectedUseCase
 import com.salat.drivestorage.domain.usecases.FullFileAccessGrantedUseCase
 import com.salat.preferences.domain.entity.BoolPref
 import com.salat.preferences.domain.usecases.FlowPrefsUseCase
+import com.salat.preferences.domain.usecases.ObserveAllCamerasDiableUseCase
 import com.salat.preferences.domain.usecases.SaveBoolPrefUseCase
 import com.salat.preview.presentation.entity.DisplayAvailableCamera
 import com.salat.preview.presentation.mappers.toDisplay
@@ -32,7 +34,8 @@ class PreviewViewModel @Inject constructor(
     private val fullFileAccessGrantedUseCase: FullFileAccessGrantedUseCase,
     private val flowPrefsUseCase: FlowPrefsUseCase,
     private val getIgnitionUseCase: GetIgnitionUseCase,
-    private val saveBoolPrefUseCase: SaveBoolPrefUseCase
+    private val saveBoolPrefUseCase: SaveBoolPrefUseCase,
+    private val observeAllCamerasDiableUseCase: ObserveAllCamerasDiableUseCase
 ) : BaseSyncViewModel<PreviewViewModel.ViewState, PreviewViewModel.Action>(ViewState()) {
 
     init {
@@ -41,6 +44,7 @@ class PreviewViewModel @Inject constructor(
             handleIgnition()
             handleDriveConnected()
             handlePrefs()
+            handleAvailableCameraConfigs()
             handleAvailableCamerasInfo()
         }
     }
@@ -78,17 +82,20 @@ class PreviewViewModel @Inject constructor(
             }
     }
 
+    private fun CoroutineScope.handleAvailableCameraConfigs() = launch(Dispatchers.IO) {
+        observeAllCamerasDiableUseCase.execute()
+            .collect { isAllCamerasDiable -> sendAction(Action.SetAllCamerasDiable(isAllCamerasDiable)) }
+    }
+
     private fun CoroutineScope.handleAvailableCamerasInfo() = launch(Dispatchers.IO) {
-        if (!hasCameraPermissionUseCase.check) return@launch
+        if (!hasCameraPermissionUseCase.check) {
+            sendAction(Action.SetCamerasInfo(emptyList()))
+            return@launch
+        }
+
         val cameras = getAvailableCamInfoUseCase.execute()
         // Available cameras filter
-        // Available cameras filter
-        val filtered = buildList {
-            addAll(cameras.take(4))
-            cameras.lastOrNull()
-                ?.takeIf { last -> last !in this }
-                ?.let(::add)
-        }.toDisplay()
+        val filtered = cameras.take(MAX_CAMERA_COUNT).toDisplay()
         sendAction(Action.SetCamerasInfo(filtered))
     }
 
@@ -104,16 +111,11 @@ class PreviewViewModel @Inject constructor(
 
         is Action.SetDriveConnected -> state.value.copy(driveConnected = viewAction.connected)
 
+        is Action.SetAllCamerasDiable -> state.value.copy(allCamerasDiable = viewAction.value)
+
         is Action.SetEnableRec -> {
             viewModelScope.launch(Dispatchers.IO) {
                 saveBoolPrefUseCase.execute(BoolPref.EnableRecord, viewAction.enable)
-            }
-            state.value
-        }
-
-        is Action.SetForceRecord -> {
-            viewModelScope.launch(Dispatchers.IO) {
-                saveBoolPrefUseCase.execute(BoolPref.ForceRecord, viewAction.enable)
             }
             state.value
         }
@@ -130,15 +132,30 @@ class PreviewViewModel @Inject constructor(
             state.value
         }
 
-        Action.HideAllCameraPreviews -> state.value.copy(
-            cameras = state.value.cameras.map { it.copy(showPreview = false) }
-        )
+        Action.LaunchRec -> {
+            viewModelScope.launch(Dispatchers.IO) {
+                saveBoolPrefUseCase.execute(BoolPref.EnableRecord, true)
+            }
+            state.value.copy(
+                cameras = state.value.cameras.map { it.copy(showPreview = false) }
+            )
+        }
 
         is Action.ToggleCameraPreview -> state.value.let { st ->
             st.copy(
                 cameras = st.cameras.map { cam ->
                     if (cam.cameraId == viewAction.id) {
                         cam.copy(showPreview = !cam.showPreview)
+                    } else cam
+                }
+            )
+        }
+
+        is Action.ToggleCameraInfo -> state.value.let { st ->
+            st.copy(
+                cameras = st.cameras.map { cam ->
+                    if (cam.cameraId == viewAction.id) {
+                        cam.copy(showInfo = !cam.showInfo)
                     } else cam
                 }
             )
@@ -152,7 +169,8 @@ class PreviewViewModel @Inject constructor(
         val forceRecord: Boolean? = null,
         val ignition: Boolean = false,
         val driveConnected: Boolean = false,
-        val cameras: List<DisplayAvailableCamera> = emptyList()
+        val cameras: List<DisplayAvailableCamera> = emptyList(),
+        val allCamerasDiable: Boolean = false
     ) : MviViewState
 
     sealed class Action : MviAction {
@@ -160,12 +178,13 @@ class PreviewViewModel @Inject constructor(
         data class SetInitPrefs(val enabled: Boolean, val force: Boolean) : Action()
         data class SetIgnition(val ignition: Boolean) : Action()
         data class SetDriveConnected(val connected: Boolean) : Action()
+        data class SetAllCamerasDiable(val value: Boolean) : Action()
         data class SetEnableRec(val enable: Boolean) : Action()
-        data class SetForceRecord(val enable: Boolean) : Action()
         data class SetCamerasInfo(val cameras: List<DisplayAvailableCamera>) : Action()
         data class ToggleCameraPreview(val id: String) : Action()
+        data class ToggleCameraInfo(val id: String) : Action()
         object RefreshDriveConnected : Action()
         object GetCamerasInfo : Action()
-        object HideAllCameraPreviews : Action()
+        object LaunchRec : Action()
     }
 }

@@ -15,4 +15,42 @@
     <string name="preview_switch_ignition_subtitle_ignition_only">Только при включённом зажигании</string>
     <string name="preview_switch_ignition_subtitle_always">Независимо от зажигания</string>
     <string name="available_cameras">Доступные камеры</string>
+    <string name="settings_screen_title">Настройки</string>
+    <string name="archive_screen_title">Архив записей</string>
+    <string name="archive_empty_message">Пока нет архивных записей</string>
+    <string name="browse_saved_clips">Экспорт сохраненных записей</string>
+
+    <string name="archive_camera_left">Левая</string>
+    <string name="archive_camera_right">Правая</string>
+    <string name="archive_camera_front">Передняя</string>
+    <string name="archive_camera_back">Задняя</string>
+
+    <string name="archive_segment_dialog_title">Сведения о сегменте</string>
+    <string name="archive_segment_dialog_camera">Камера: %1$s</string>
+    <string name="archive_segment_dialog_time">Время: %1$s – %2$s</string>
+    <string name="archive_segment_dialog_files">Файлов: %1$d</string>
+    <string name="archive_dialog_close">Закрыть</string>
+
+    <string name="settings_camera_permission_required">Для настройки камер необходимо выдать разрешение на использование камеры</string>
+    <string name="settings_no_cameras_found">Камеры не найдены</string>
+    <string name="settings_camera_recording_title">Запись</string>
+    <string name="settings_camera_recording_on">Включена</string>
+    <string name="settings_camera_recording_off">Выключена</string>
+    <string name="settings_camera_format_title">Формат</string>
+    <string name="settings_camera_fps">FPS: %1$d</string>
+    <string name="settings_camera_left">Запись левой камеры</string>
+    <string name="settings_camera_right">Запись правой камеры</string>
+    <string name="settings_camera_front">Запись передней камеры</string>
+    <string name="settings_camera_rear">Запись задней камеры</string>
+    <string name="settings_camera_generic">Камера %1$s</string>
+    <string name="content_description_back">Назад</string>
+    <string name="all_cameras_disabled">Все камеры отключены</string>
+
+    <string name="preview_cd_toggle_preview">Переключить видимость превью</string>
+    <string name="preview_cd_camera_info">Информация о камере</string>
+    <string name="preview_cd_status">Статус</string>
+
+    <string name="settings_general_title">Общее</string>
+    <string name="settings_segment_duration_minutes">Длина сегментов: %1$d мин</string>
+    <string name="settings_segment_duration_seconds">Длина сегментов: %1$d сек</string>
 </resources>

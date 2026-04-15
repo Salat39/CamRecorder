@@ -4,6 +4,7 @@ import com.salat.preferences.domain.DataStoreRepository
 import com.salat.preferences.domain.PreferencesRepository
 import com.salat.preferences.domain.usecases.FlowBoolPrefUseCase
 import com.salat.preferences.domain.usecases.FlowBoolPrefsUseCase
+import com.salat.preferences.domain.usecases.FlowLongPrefUseCase
 import com.salat.preferences.domain.usecases.FlowPrefsUseCase
 import com.salat.preferences.domain.usecases.LoadBoolPrefUseCase
 import com.salat.preferences.domain.usecases.LoadBoolSharedPrefUseCase
@@ -11,12 +12,16 @@ import com.salat.preferences.domain.usecases.LoadFloatPrefUseCase
 import com.salat.preferences.domain.usecases.LoadFloatSharedPrefUseCase
 import com.salat.preferences.domain.usecases.LoadIntPrefUseCase
 import com.salat.preferences.domain.usecases.LoadIntSharedPrefUseCase
+import com.salat.preferences.domain.usecases.ObserveAllCamerasDiableUseCase
+import com.salat.preferences.domain.usecases.ObserveCameraRecordingConfigsUseCase
 import com.salat.preferences.domain.usecases.SaveBoolPrefUseCase
 import com.salat.preferences.domain.usecases.SaveBoolSharedPrefUseCase
+import com.salat.preferences.domain.usecases.SaveCameraRecordingConfigUseCase
 import com.salat.preferences.domain.usecases.SaveFloatPrefUseCase
 import com.salat.preferences.domain.usecases.SaveFloatSharedPrefUseCase
 import com.salat.preferences.domain.usecases.SaveIntPrefUseCase
 import com.salat.preferences.domain.usecases.SaveIntSharedPrefUseCase
+import com.salat.preferences.domain.usecases.SaveLongPrefUseCase
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -69,5 +74,23 @@ object PreferencesDomainModule {
     fun provideSaveIntPrefUseCase(preferences: DataStoreRepository) = SaveIntPrefUseCase(preferences)
 
     @Provides
+    fun provideFlowLongPrefUseCase(preferences: DataStoreRepository) = FlowLongPrefUseCase(preferences)
+
+    @Provides
+    fun provideSaveLongPrefUseCase(preferences: DataStoreRepository) = SaveLongPrefUseCase(preferences)
+
+    @Provides
     fun provideFlowPrefsUseCase(preferences: DataStoreRepository) = FlowPrefsUseCase(preferences)
+
+    @Provides
+    fun provideObserveCameraRecordingConfigsUseCase(preferences: DataStoreRepository) =
+        ObserveCameraRecordingConfigsUseCase(preferences)
+
+    @Provides
+    fun provideSaveCameraRecordingConfigUseCase(preferences: DataStoreRepository) =
+        SaveCameraRecordingConfigUseCase(preferences)
+
+    @Provides
+    fun provideObserveAllCamerasDiableUseCase(preferences: DataStoreRepository) =
+        ObserveAllCamerasDiableUseCase(preferences)
 }

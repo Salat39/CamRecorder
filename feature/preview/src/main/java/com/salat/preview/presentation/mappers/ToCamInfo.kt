@@ -33,7 +33,8 @@ fun AvailableCameraInfo.toDisplay(): DisplayAvailableCamera {
         targetFpsRange = targetFpsRange?.toDisplay(),
         capabilities = capabilitiesUi,
         capabilitiesLabel = capabilitiesUi.joinToString(),
-        showPreview = false
+        showPreview = false,
+        showInfo = false
     )
 }
 

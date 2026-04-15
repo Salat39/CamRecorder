@@ -7,22 +7,33 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.salat.preferences.domain.DataStoreRepository
 import com.salat.preferences.domain.entity.AnyPref
 import com.salat.preferences.domain.entity.BoolPref
+import com.salat.preferences.domain.entity.CameraDataStoreConfig
 import com.salat.preferences.domain.entity.FloatPref
 import com.salat.preferences.domain.entity.IntPref
+import com.salat.preferences.domain.entity.LongPref
 import com.salat.preferences.domain.entity.StringPref
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 
 class DataStoreRepositoryImpl(private val context: Context) : DataStoreRepository {
+    companion object {
+        private const val CAMERA_ENABLED_KEY_PREFIX = "cam_enable_"
+
+        val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "app_data")
+    }
+
     override val dataFlow = context.dataStore.data
 
     // -----------------------------------
@@ -34,7 +45,7 @@ class DataStoreRepositoryImpl(private val context: Context) : DataStoreRepositor
     }
 
     override suspend fun load(pref: FloatPref): Float {
-        return dataFlow.first()[floatPreferencesKey(pref.key)]?.toFloat() ?: pref.default
+        return dataFlow.first()[floatPreferencesKey(pref.key)] ?: pref.default
     }
 
     override suspend fun exist(pref: FloatPref): Boolean {
@@ -49,7 +60,7 @@ class DataStoreRepositoryImpl(private val context: Context) : DataStoreRepositor
         var lastValue: Float? = null
         return dataFlow
             .map { preferences ->
-                preferences[floatPreferencesKey(pref.key)]?.toFloat() ?: pref.default
+                preferences[floatPreferencesKey(pref.key)] ?: pref.default
             }
             .filter { lastValue != it }
             .onEach { lastValue = it }
@@ -61,7 +72,7 @@ class DataStoreRepositoryImpl(private val context: Context) : DataStoreRepositor
         return dataFlow
             .map { preferences ->
                 prefs.map { pref ->
-                    val currentValue = preferences[floatPreferencesKey(pref.key)]?.toFloat() ?: pref.default
+                    val currentValue = preferences[floatPreferencesKey(pref.key)] ?: pref.default
                     lastValues[pref.key] = currentValue
                     currentValue
                 }
@@ -145,6 +156,48 @@ class DataStoreRepositoryImpl(private val context: Context) : DataStoreRepositor
             }
             .filter { lastValue != it }
             .onEach { lastValue = it }
+    }
+
+    // -----------------------------------
+    // Long
+    // -----------------------------------
+
+    override suspend fun save(pref: LongPref, value: Long) {
+        context.dataStore.edit { store -> store[longPreferencesKey(pref.key)] = value }
+    }
+
+    override suspend fun load(pref: LongPref) = dataFlow.first()[longPreferencesKey(pref.key)] ?: pref.default
+
+    override suspend fun exist(pref: LongPref) = dataFlow.first()[longPreferencesKey(pref.key)] != null
+
+    override suspend fun remove(pref: LongPref) {
+        context.dataStore.edit { preferences ->
+            preferences.remove(longPreferencesKey(pref.key))
+        }
+    }
+
+    override fun getLongPrefFlow(pref: LongPref): Flow<Long> {
+        var lastValue: Long? = null
+        return dataFlow
+            .map { preferences ->
+                preferences[longPreferencesKey(pref.key)] ?: pref.default
+            }
+            .filter { lastValue != it }
+            .onEach { lastValue = it }
+    }
+
+    override fun getLongPrefsFlow(vararg prefs: LongPref): Flow<List<Long>> {
+        val lastValues = mutableMapOf<String, Long?>()
+
+        return dataFlow
+            .map { preferences ->
+                prefs.map { pref ->
+                    val currentValue = preferences[longPreferencesKey(pref.key)] ?: pref.default
+                    lastValues[pref.key] = currentValue
+                    currentValue
+                }
+            }
+            .distinctUntilChanged()
     }
 
     // -----------------------------------
@@ -239,6 +292,12 @@ class DataStoreRepositoryImpl(private val context: Context) : DataStoreRepositor
                             currentValue
                         }
 
+                        is LongPref -> {
+                            val currentValue = preferences[longPreferencesKey(pref.key)] ?: pref.default
+                            lastValues[pref.key] = currentValue
+                            currentValue
+                        }
+
                         is FloatPref -> {
                             val currentValue = preferences[floatPreferencesKey(pref.key)] ?: pref.default
                             lastValues[pref.key] = currentValue
@@ -252,7 +311,91 @@ class DataStoreRepositoryImpl(private val context: Context) : DataStoreRepositor
             .distinctUntilChanged()
     }
 
-    companion object {
-        val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "app_data")
+    override fun getCameraRecordingConfigsFlow(
+        cameraIds: List<String>,
+        defaultFps: Int,
+        minFps: Int,
+        maxFps: Int,
+        defaultOutputType: Int,
+        defaultEnabled: Boolean,
+    ): Flow<Map<String, CameraDataStoreConfig>> {
+        if (cameraIds.isEmpty()) {
+            return dataFlow
+                .map { emptyMap<String, CameraDataStoreConfig>() }
+                .distinctUntilChanged()
+                .flowOn(Dispatchers.IO)
+        }
+
+        return dataFlow
+            .map { preferences ->
+                cameraIds.associateWith { cameraId ->
+                    CameraDataStoreConfig(
+                        cameraId = cameraId,
+                        enabled = preferences[booleanPreferencesKey(cameraEnabledKey(cameraId))] ?: defaultEnabled,
+                        fps = (preferences[intPreferencesKey(cameraFpsKey(cameraId))] ?: defaultFps)
+                            .coerceIn(minFps, maxFps),
+                        outputType = preferences[intPreferencesKey(cameraOutputTypeKey(cameraId))] ?: defaultOutputType,
+                    )
+                }
+            }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.IO)
     }
+
+    override fun getCameraRecordingConfigsFlow(
+        defaultConfigsByCameraId: Map<String, CameraDataStoreConfig>,
+        minFps: Int,
+        maxFps: Int,
+    ): Flow<Map<String, CameraDataStoreConfig>> {
+        if (defaultConfigsByCameraId.isEmpty()) {
+            return dataFlow
+                .map { emptyMap<String, CameraDataStoreConfig>() }
+                .distinctUntilChanged()
+                .flowOn(Dispatchers.IO)
+        }
+
+        return dataFlow
+            .map { preferences ->
+                defaultConfigsByCameraId.mapValues { (cameraId, defaultConfig) ->
+                    CameraDataStoreConfig(
+                        cameraId = cameraId,
+                        enabled = preferences[booleanPreferencesKey(cameraEnabledKey(cameraId))]
+                            ?: defaultConfig.enabled,
+                        fps = (preferences[intPreferencesKey(cameraFpsKey(cameraId))] ?: defaultConfig.fps)
+                            .coerceIn(minFps, maxFps),
+                        outputType = preferences[intPreferencesKey(cameraOutputTypeKey(cameraId))]
+                            ?: defaultConfig.outputType,
+                    )
+                }
+            }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.IO)
+    }
+
+    override fun getCameraEnabledValuesFlow(): Flow<List<Boolean>> {
+        return dataFlow
+            .map { preferences ->
+                preferences.asMap()
+                    .filterKeys { it.name.startsWith(CAMERA_ENABLED_KEY_PREFIX) }
+                    .entries
+                    .sortedBy { it.key.name }
+                    .mapNotNull { (_, value) -> value as? Boolean }
+            }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.IO)
+    }
+
+    override suspend fun saveCameraRecordingConfig(config: CameraDataStoreConfig) {
+        context.dataStore.edit { store ->
+            store[booleanPreferencesKey(cameraEnabledKey(config.cameraId))] = config.enabled
+            store[intPreferencesKey(cameraFpsKey(config.cameraId))] = config.fps
+            store[intPreferencesKey(cameraOutputTypeKey(config.cameraId))] = config.outputType
+        }
+    }
+
+    private fun cameraFpsKey(cameraId: String): String = "cam_fps_$cameraId"
+
+    private fun cameraOutputTypeKey(cameraId: String): String = "cam_output_type_$cameraId"
+
+    private fun cameraEnabledKey(cameraId: String): String = "${CAMERA_ENABLED_KEY_PREFIX}$cameraId"
 }

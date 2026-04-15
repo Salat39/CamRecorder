@@ -16,4 +16,6 @@ object Modules {
     const val CORE_SHARED_EVENTS = ":core:sharedEvents" // Cross modules signaling
     const val CORE_PREFERENCES = ":core:preferences" // Data storage
     const val FEATURE_PREVIEW = ":feature:preview" // Main preview cam screen
+    const val FEATURE_SETTINGS = ":feature:settings" // Settings screen
+    const val FEATURE_ARCHIVE = ":feature:archive" // Archive screen
 }

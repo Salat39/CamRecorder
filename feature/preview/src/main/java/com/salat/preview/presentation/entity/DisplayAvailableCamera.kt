@@ -20,5 +20,6 @@ data class DisplayAvailableCamera(
     val targetFpsRange: DisplayAvailableCameraFpsRange?,
     val capabilities: List<String>,
     val capabilitiesLabel: String,
-    val showPreview: Boolean
+    val showPreview: Boolean,
+    val showInfo: Boolean
 )

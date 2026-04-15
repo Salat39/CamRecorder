@@ -17,7 +17,9 @@ android {
 }
 
 dependencies {
+    implementation(project(Modules.FEATURE_SETTINGS))
     implementation(project(Modules.CORE_BASE))
+    implementation(project(Modules.CORE_COMMON_CONST))
     implementation(project(Modules.CORE_RESOURCES))
     implementation(project(Modules.CORE_UI))
     implementation(project(Modules.CORE_UIKIT))
@@ -27,6 +29,7 @@ dependencies {
     implementation(project(Modules.CORE_RECORDER))
     implementation(project(Modules.CORE_CAR_API))
 
+    implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

@@ -30,8 +30,6 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
-
-        buildConfigField("Float", "UI_SCALE", "1f")
     }
     bundle {
         language {
@@ -57,8 +55,6 @@ android {
                 put("applicationLabel", "@string/app_label")
                 put("usesCleartextTraffic", "false")
             }
-
-            buildConfigField("Float", "UI_SCALE", "1.5f")
         }
         maybeCreate("internal").apply {
             isMinifyEnabled = true
@@ -152,7 +148,7 @@ hilt {
 dependencies {
     // All modules that use Hilt to generate classes must be connected
     implementation(project(Modules.CORE_BASE))
-    // implementation(project(Modules.CORE_COMMON_CONST))
+    implementation(project(Modules.CORE_COMMON_CONST))
     implementation(project(Modules.CORE_COROUTINES))
     implementation(project(Modules.CORE_NAVIGATION))
     implementation(project(Modules.CORE_RESOURCES))
@@ -167,6 +163,8 @@ dependencies {
     implementation(project(Modules.CORE_PREFERENCES))
     implementation(project(Modules.CORE_SHARED_EVENTS))
     implementation(project(Modules.FEATURE_PREVIEW))
+    implementation(project(Modules.FEATURE_SETTINGS))
+    implementation(project(Modules.FEATURE_ARCHIVE))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)
@@ -203,12 +201,21 @@ detekt {
         rootProject.file("/core/sharedEvents/src"),
         rootProject.file("/core/ui/src"),
         rootProject.file("/core/uikit/src"),
-        rootProject.file("/feature/preview/src")
+        rootProject.file("/feature/preview/src"),
+        rootProject.file("/feature/settings/src"),
+        rootProject.file("/feature/archive/src")
     )
 }
+
+val enableLint: Provider<Boolean> = providers.gradleProperty("enable_lint")
+    .map(String::toBoolean)
+    .orElse(false)
+
 // Launch detekt by every build
-tasks.getByPath("preBuild")
-    .dependsOn("detekt")
+if (enableLint.get()) {
+    tasks.getByPath("preBuild")
+        .dependsOn("detekt")
+}
 
 afterEvaluate {
     tasks.named("kspNonMinifiedReleaseKotlin").configure {

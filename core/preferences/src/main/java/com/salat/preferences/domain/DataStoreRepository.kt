@@ -3,8 +3,10 @@ package com.salat.preferences.domain
 import androidx.datastore.preferences.core.Preferences
 import com.salat.preferences.domain.entity.AnyPref
 import com.salat.preferences.domain.entity.BoolPref
+import com.salat.preferences.domain.entity.CameraDataStoreConfig
 import com.salat.preferences.domain.entity.FloatPref
 import com.salat.preferences.domain.entity.IntPref
+import com.salat.preferences.domain.entity.LongPref
 import com.salat.preferences.domain.entity.StringPref
 import kotlinx.coroutines.flow.Flow
 
@@ -21,6 +23,19 @@ interface DataStoreRepository {
     suspend fun remove(pref: IntPref)
 
     fun getIntPrefFlow(pref: IntPref): Flow<Int>
+
+    // Long
+    suspend fun save(pref: LongPref, value: Long)
+
+    suspend fun load(pref: LongPref): Long
+
+    suspend fun exist(pref: LongPref): Boolean
+
+    suspend fun remove(pref: LongPref)
+
+    fun getLongPrefFlow(pref: LongPref): Flow<Long>
+
+    fun getLongPrefsFlow(vararg prefs: LongPref): Flow<List<Long>>
 
     // Boolean
     suspend fun save(pref: BoolPref, value: Boolean)
@@ -65,4 +80,23 @@ interface DataStoreRepository {
     suspend fun clear()
 
     fun getAnyPrefsFlow(vararg prefs: AnyPref): Flow<List<Any>>
+
+    fun getCameraRecordingConfigsFlow(
+        cameraIds: List<String>,
+        defaultFps: Int,
+        minFps: Int,
+        maxFps: Int,
+        defaultOutputType: Int,
+        defaultEnabled: Boolean,
+    ): Flow<Map<String, CameraDataStoreConfig>>
+
+    fun getCameraRecordingConfigsFlow(
+        defaultConfigsByCameraId: Map<String, CameraDataStoreConfig>,
+        minFps: Int,
+        maxFps: Int,
+    ): Flow<Map<String, CameraDataStoreConfig>>
+
+    fun getCameraEnabledValuesFlow(): Flow<List<Boolean>>
+
+    suspend fun saveCameraRecordingConfig(config: CameraDataStoreConfig)
 }

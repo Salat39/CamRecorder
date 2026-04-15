@@ -28,26 +28,34 @@ import android.util.Size
 import android.view.Surface
 import androidx.core.content.ContextCompat
 import com.salat.carapi.domain.repository.CarApiRepository
-import com.salat.commonconst.BASE_FRAME_RATE
 import com.salat.commonconst.BROKEN_FILE_DELETE_THRESHOLD_BYTES
+import com.salat.commonconst.CAMERA_OUTPUT_TYPE_AVC
+import com.salat.commonconst.CAMERA_OUTPUT_TYPE_TS
+import com.salat.commonconst.DEFAULT_CAMERA_FPS
+import com.salat.commonconst.MAX_CAMERA_COUNT
+import com.salat.commonconst.MAX_CAMERA_FPS
 import com.salat.commonconst.MAX_VIDEO_HEIGHT
 import com.salat.commonconst.MAX_VIDEO_WIDTH
+import com.salat.commonconst.MIN_CAMERA_FPS
 import com.salat.commonconst.MIN_FREE_SPACE_RATIO
 import com.salat.commonconst.PIXELS_576P
 import com.salat.commonconst.PIXELS_720P
 import com.salat.commonconst.RECORDER_RETRY_DELAY_MS
 import com.salat.commonconst.RECORDER_START_ATTEMPTS
 import com.salat.commonconst.RECORDS_ROOT_DIRECTORY_NAME
-import com.salat.commonconst.SEGMENT_DURATION_MS
 import com.salat.commonconst.STORAGE_CHECK_INITIAL_DELAY_MS
 import com.salat.commonconst.STORAGE_CHECK_INTERVAL_MS
 import com.salat.commonconst.TARGET_FREE_SPACE_RATIO
 import com.salat.commonconst.VIDEO_BITRATE_480P
 import com.salat.commonconst.VIDEO_BITRATE_576P
 import com.salat.commonconst.VIDEO_BITRATE_720P
+import com.salat.commonconst.defaultCameraEnable
+import com.salat.commonconst.defaultCameraFps
 import com.salat.drivestorage.domain.repository.DriveStorageRepository
 import com.salat.preferences.domain.DataStoreRepository
 import com.salat.preferences.domain.entity.BoolPref
+import com.salat.preferences.domain.entity.CameraDataStoreConfig
+import com.salat.preferences.domain.entity.LongPref
 import com.salat.recorder.data.components.AvcSegmentedFileWriter
 import com.salat.recorder.data.components.GlInputSurfaceBridge
 import com.salat.recorder.data.components.SegmentedVideoFileWriter
@@ -67,7 +75,6 @@ import com.salat.recorder.data.entity.SegmentOutputMode
 import com.salat.recorder.data.utils.alignSizeDown
 import com.salat.recorder.data.utils.createRecordingSession
 import com.salat.recorder.data.utils.deleteEmptyDirectoriesUpwards
-import com.salat.recorder.data.utils.logCameraCapabilities
 import com.salat.recorder.data.utils.segmentGroupKeyOrNull
 import com.salat.recorder.data.utils.supportsSurfaceInput
 import com.salat.recorder.domain.entity.AvailableCameraFpsRange
@@ -81,6 +88,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -89,13 +97,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -127,8 +139,6 @@ class RecorderRepositoryImpl(
 
         private const val FILE_EXTENSION_AVC = "h264"
         private const val FILE_EXTENSION_TS = "ts"
-        private val ACTIVE_SEGMENT_OUTPUT = SegmentOutputMode.MPEG_TS
-
         private const val VIDEO_MIME_TYPE = MediaFormat.MIMETYPE_VIDEO_AVC
         private const val KEY_FRAME_INTERVAL_SECONDS = 2 // TODO TEST, base value 1
         private const val ENCODER_DEQUEUE_TIMEOUT_US = 50_000L
@@ -142,7 +152,8 @@ class RecorderRepositoryImpl(
         private const val FIRST_KEY_FRAME_TIMEOUT_MS = 5_000L
         private const val GL_BRIDGE_THREAD_PREFIX = "cam-recorder-gl"
 
-        private const val MAX_CAMERA_COUNT = 4
+        private const val CAMERA_CONFIG_DEBOUNCE_MS = 200L
+        private const val MIN_SEGMENT_DURATION_MS = 1_000L
 
         // Keeps encoder size strictly at preferred-or-smaller presets
         private const val ALLOW_CAMERA_SIZE_FALLBACK = false
@@ -209,6 +220,9 @@ class RecorderRepositoryImpl(
     @Volatile
     private var activeEngine: MultiCameraRecordingEngine? = null
 
+    @Volatile
+    private var activeConfigSnapshot = RecorderConfigSnapshot()
+
     private val cameraManager by lazy(LazyThreadSafetyMode.NONE) {
         context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     }
@@ -230,6 +244,7 @@ class RecorderRepositoryImpl(
         scope.launch {
             handlePrefs()
             handleRecording()
+            handleRecorderConfigs()
             handleIgnition()
             handleDriveStorage()
         }
@@ -242,11 +257,39 @@ class RecorderRepositoryImpl(
         }
     }
 
-    private suspend fun reconcileRecordingState() = controlMutex.withLock {
+    @OptIn(FlowPreview::class)
+    private fun CoroutineScope.handleRecorderConfigs() = launch(Dispatchers.IO) {
+        observeRecorderConfigSnapshot()
+            .debounce(CAMERA_CONFIG_DEBOUNCE_MS)
+            .distinctUntilChanged()
+            .collect { snapshot ->
+                val shouldRestart = snapshot != activeConfigSnapshot
+                activeConfigSnapshot = snapshot
+
+                if (shouldRestart) {
+                    Timber.i("Camera config snapshot changed, restarting recorder engine")
+                    reconcileRecordingState(forceRestart = true)
+                }
+            }
+    }
+
+    private suspend fun reconcileRecordingState(forceRestart: Boolean = false) = controlMutex.withLock {
         if (!desiredRecording) {
             activeEngine?.stop()
             activeEngine = null
             return
+        }
+
+        if (!hasEnabledCameras(activeConfigSnapshot)) {
+            activeEngine?.stop()
+            activeEngine = null
+            Timber.i("Recorder engine will stay stopped because all cameras are disabled")
+            return
+        }
+
+        if (forceRestart) {
+            activeEngine?.stop()
+            activeEngine = null
         }
 
         if (activeEngine != null) return
@@ -255,6 +298,7 @@ class RecorderRepositoryImpl(
             cameraManager = cameraManager,
             driveStorage = driveStorage,
             shouldContinue = { desiredRecording },
+            configSnapshot = activeConfigSnapshot,
         )
 
         try {
@@ -273,6 +317,48 @@ class RecorderRepositoryImpl(
             Timber.e(throwable, "Failed to start multi-camera recording engine")
             engine.stop()
             activeEngine = null
+        }
+    }
+
+    private fun observeRecorderConfigSnapshot() = run {
+        val (_, openCameraIds) = resolveLayoutAndIdsLikeReferenceProject(cameraManager)
+        val defaultCameraConfigs = openCameraIds.associateWith { cameraId ->
+            CameraDataStoreConfig(
+                cameraId = cameraId,
+                enabled = cameraId.defaultCameraEnable,
+                fps = cameraId.defaultCameraFps,
+                outputType = CAMERA_OUTPUT_TYPE_AVC,
+            )
+        }
+
+        val cameraConfigsFlow = if (defaultCameraConfigs.isEmpty()) {
+            flowOf(emptyMap())
+        } else {
+            dataStore.getCameraRecordingConfigsFlow(
+                defaultConfigsByCameraId = defaultCameraConfigs,
+                minFps = MIN_CAMERA_FPS,
+                maxFps = MAX_CAMERA_FPS,
+            )
+        }
+
+        val segmentDurationFlow = dataStore.getLongPrefFlow(LongPref.SegmentDurationMs)
+            .map { segmentDurationMs ->
+                segmentDurationMs.coerceAtLeast(MIN_SEGMENT_DURATION_MS)
+            }
+            .distinctUntilChanged()
+
+        combine(cameraConfigsFlow, segmentDurationFlow) { cameraConfigs, segmentDurationMs ->
+            buildRecorderConfigSnapshot(
+                cameraConfigs = cameraConfigs,
+                segmentDurationMs = segmentDurationMs,
+            )
+        }
+    }
+
+    private fun hasEnabledCameras(snapshot: RecorderConfigSnapshot): Boolean {
+        val (_, openCameraIds) = resolveLayoutAndIdsLikeReferenceProject(cameraManager)
+        return openCameraIds.any { cameraId ->
+            snapshot.configFor(cameraId).enabled
         }
     }
 
@@ -306,6 +392,7 @@ class RecorderRepositoryImpl(
         private val cameraManager: CameraManager,
         private val driveStorage: DriveStorageRepository,
         private val shouldContinue: () -> Boolean,
+        private val configSnapshot: RecorderConfigSnapshot,
     ) {
         private val engineJob = SupervisorJob()
         private val engineScope = CoroutineScope(engineJob + Dispatchers.IO)
@@ -316,9 +403,12 @@ class RecorderRepositoryImpl(
         private val controllers = mutableListOf<SingleCameraRecorder>()
 
         suspend fun start() {
-            logCameraCapabilities(cameraManager)
+            // logCameraCapabilities(cameraManager)
 
-            val descriptors = discoverCameraDescriptors(cameraManager)
+            val descriptors = discoverCameraDescriptors(
+                cameraManager = cameraManager,
+                configSnapshot = configSnapshot,
+            )
             require(descriptors.isNotEmpty()) { "No recordable cameras found" }
 
             descriptors.forEachIndexed { index, descriptor ->
@@ -326,11 +416,13 @@ class RecorderRepositoryImpl(
                 val controller = SingleCameraRecorder(
                     cameraManager = cameraManager,
                     descriptor = descriptor,
+                    runtimeConfig = configSnapshot.configFor(descriptor.cameraId),
                     cameraDirectory = cameraDirectory,
                     scope = engineScope,
                     cameraHandler = cameraHandler,
                     shouldContinue = shouldContinue,
                     rolloverOffsetMs = calculateRolloverOffsetMs(index),
+                    segmentDurationMs = configSnapshot.segmentDurationMs,
                 )
 
                 try {
@@ -420,13 +512,19 @@ class RecorderRepositoryImpl(
     private inner class SingleCameraRecorder(
         private val cameraManager: CameraManager,
         private val descriptor: CameraDescriptor,
+        private val runtimeConfig: CameraRuntimeConfig,
         private val cameraDirectory: File,
         private val scope: CoroutineScope,
         private val cameraHandler: Handler,
         private val shouldContinue: () -> Boolean,
         private val rolloverOffsetMs: Long,
+        private val segmentDurationMs: Long,
     ) {
         private val controlMutex = Mutex()
+        private val segmentDurationSeconds = TimeUnit.MILLISECONDS.toSeconds(
+            segmentDurationMs.coerceAtLeast(MIN_SEGMENT_DURATION_MS)
+        )
+        private val fileNameFps = descriptor.frameRate.coerceIn(MIN_CAMERA_FPS, MAX_CAMERA_FPS)
 
         @Volatile
         private var cameraDevice: CameraDevice? = null
@@ -534,8 +632,8 @@ class RecorderRepositoryImpl(
         }
 
         private suspend fun startPipeline(inputMode: CameraInputMode) {
-            val preparedWriter = createSegmentWriter()
             val preparedEncoder = buildVideoEncoder(descriptor)
+            val preparedWriter = createSegmentWriter(preparedEncoder.config.frameRate)
             var preparedSurface: Surface? = null
             var preparedBridge: GlInputSurfaceBridge? = null
             var published = false
@@ -600,9 +698,9 @@ class RecorderRepositoryImpl(
 
             while (scope.isActive && shouldContinue() && !stopping) {
                 val targetSegmentDurationMs = if (firstRollover) {
-                    SEGMENT_DURATION_MS + rolloverOffsetMs
+                    segmentDurationMs + rolloverOffsetMs
                 } else {
-                    SEGMENT_DURATION_MS
+                    segmentDurationMs
                 }
                 val deadline = segmentStartedAt + targetSegmentDurationMs
                 val waitMs = deadline - SystemClock.elapsedRealtime()
@@ -804,12 +902,13 @@ class RecorderRepositoryImpl(
             runCatching { activeWriter?.close(deleteActiveFile = deleteActiveFile) }
         }
 
-        private fun createSegmentWriter(): SegmentedVideoFileWriter {
-            return when (ACTIVE_SEGMENT_OUTPUT) {
+        private fun createSegmentWriter(actualFrameRate: Int): SegmentedVideoFileWriter {
+            return when (runtimeConfig.outputMode) {
                 SegmentOutputMode.RAW_AVC -> AvcSegmentedFileWriter(
                     brokenFileDeleteThresholdBytes = BROKEN_FILE_DELETE_THRESHOLD_BYTES,
                     ioBufferBytes = WRITER_IO_BUFFER_BYTES,
                     syncOnSegmentClose = SYNC_COMPLETED_SEGMENTS_TO_DISK,
+                    declaredFrameRate = actualFrameRate,
                 )
 
                 SegmentOutputMode.MPEG_TS -> TsSegmentedFileWriter(
@@ -821,10 +920,7 @@ class RecorderRepositoryImpl(
         }
 
         private fun segmentFileExtension(): String {
-            return when (ACTIVE_SEGMENT_OUTPUT) {
-                SegmentOutputMode.RAW_AVC -> FILE_EXTENSION_AVC
-                SegmentOutputMode.MPEG_TS -> FILE_EXTENSION_TS
-            }
+            return recordingFileExtension(runtimeConfig.outputMode)
         }
 
         private fun createSegmentFile(): File {
@@ -835,7 +931,14 @@ class RecorderRepositoryImpl(
                 ?: System.currentTimeMillis().toString()
             val dateDirectory = File(cameraDirectory, dateDirectoryName)
             val aliasDirectory = File(dateDirectory, descriptor.alias)
-            return File(aliasDirectory, "${fileTimestamp}_${descriptor.fileAlias}.${segmentFileExtension()}")
+            return File(
+                aliasDirectory,
+                fileTimestamp +
+                    "_$segmentDurationSeconds" +
+                    "_$fileNameFps" +
+                    "_${descriptor.fileAlias}" +
+                    ".${segmentFileExtension()}"
+            )
         }
 
         private fun startRepeatingRequest(targetSurface: Surface) {
@@ -913,7 +1016,38 @@ class RecorderRepositoryImpl(
             }
     }
 
-    private fun discoverCameraDescriptors(cameraManager: CameraManager): List<CameraDescriptor> {
+    private fun buildRecorderConfigSnapshot(
+        cameraConfigs: Map<String, CameraDataStoreConfig>,
+        segmentDurationMs: Long,
+    ): RecorderConfigSnapshot {
+        if (cameraConfigs.isEmpty()) {
+            return RecorderConfigSnapshot(segmentDurationMs = segmentDurationMs)
+        }
+
+        val runtimeConfigs = cameraConfigs.mapValues { (_, config) ->
+            CameraRuntimeConfig(
+                cameraId = config.cameraId,
+                enabled = config.enabled,
+                fps = config.fps,
+                outputMode = outputModeFromPreference(config.outputType),
+            )
+        }
+
+        return RecorderConfigSnapshot(
+            cameraConfigs = runtimeConfigs,
+            segmentDurationMs = segmentDurationMs,
+        )
+    }
+
+    private fun outputModeFromPreference(outputType: Int) = when (outputType) {
+        CAMERA_OUTPUT_TYPE_TS -> SegmentOutputMode.MPEG_TS
+        else -> SegmentOutputMode.RAW_AVC
+    }
+
+    private fun discoverCameraDescriptors(
+        cameraManager: CameraManager,
+        configSnapshot: RecorderConfigSnapshot,
+    ): List<CameraDescriptor> {
         val (layout, openCameraIds) = resolveLayoutAndIdsLikeReferenceProject(cameraManager)
         if (openCameraIds.isEmpty()) return emptyList()
 
@@ -934,6 +1068,12 @@ class RecorderRepositoryImpl(
         )
 
         return openCameraIds.mapNotNull { cameraId ->
+            val runtimeConfig = configSnapshot.configFor(cameraId)
+            if (!runtimeConfig.enabled) {
+                Timber.i("Camera %s is disabled by DataStore config", cameraId)
+                return@mapNotNull null
+            }
+
             val alias = aliasByCameraId[cameraId] ?: return@mapNotNull null
             val characteristics = runCatching { cameraManager.getCameraCharacteristics(cameraId) }
                 .getOrElse {
@@ -945,8 +1085,11 @@ class RecorderRepositoryImpl(
                 characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                     ?: return@mapNotNull null
 
-            val recordingProfile = resolveRecordingProfile(characteristics, configurationMap)
-                ?: return@mapNotNull null
+            val recordingProfile = resolveRecordingProfile(
+                characteristics = characteristics,
+                configurationMap = configurationMap,
+                requestedFrameRate = runtimeConfig.fps,
+            ) ?: return@mapNotNull null
 
             CameraDescriptor(
                 cameraId = cameraId,
@@ -957,7 +1100,7 @@ class RecorderRepositoryImpl(
                 frameRate = recordingProfile.fpsSelection.frameRate,
                 videoBitrate = chooseVideoBitrate(recordingProfile.videoSize),
                 outputFormat = 0,
-                fileExtension = recordingFileExtension(),
+                fileExtension = recordingFileExtension(runtimeConfig.outputMode),
             )
         }
     }
@@ -1056,32 +1199,26 @@ class RecorderRepositoryImpl(
         if (ids.isEmpty()) return LayoutMapping(null, null, null, null)
 
         return when {
-            ids.size >= 4 -> {
-                LayoutMapping(
-                    frontId = ids[2],
-                    backId = ids[3],
-                    leftId = ids[0],
-                    rightId = ids[1],
-                )
-            }
+            ids.size >= 4 -> LayoutMapping(
+                frontId = ids[2],
+                backId = ids[3],
+                leftId = ids[0],
+                rightId = ids[1],
+            )
 
-            ids.size == 3 -> {
-                LayoutMapping(
-                    frontId = ids[0],
-                    backId = ids[2],
-                    leftId = ids[0],
-                    rightId = ids[2],
-                )
-            }
+            ids.size == 3 -> LayoutMapping(
+                frontId = ids[0],
+                backId = ids[2],
+                leftId = ids[0],
+                rightId = ids[2],
+            )
 
-            ids.size >= 2 -> {
-                LayoutMapping(
-                    frontId = ids[0],
-                    backId = ids[1],
-                    leftId = ids[0],
-                    rightId = ids[1],
-                )
-            }
+            ids.size >= 2 -> LayoutMapping(
+                frontId = ids[0],
+                backId = ids[1],
+                leftId = ids[0],
+                rightId = ids[1],
+            )
 
             else -> {
                 val id = ids[0]
@@ -1097,7 +1234,8 @@ class RecorderRepositoryImpl(
 
     private fun resolveRecordingProfile(
         characteristics: CameraCharacteristics,
-        configurationMap: StreamConfigurationMap
+        configurationMap: StreamConfigurationMap,
+        requestedFrameRate: Int = DEFAULT_CAMERA_FPS,
     ): RecordingProfile? {
         val sizes = collectVideoSizes(configurationMap)
         if (sizes.isEmpty()) return null
@@ -1109,7 +1247,8 @@ class RecorderRepositoryImpl(
             ?.filterNotNull()
             .orEmpty()
 
-        PREFERRED_FRAME_RATES.forEach { preferredFps ->
+        val preferredFrameRates = buildPreferredFrameRates(requestedFrameRate)
+        preferredFrameRates.forEach { preferredFps ->
             val fpsSelection = choosePreferredFpsSelection(ranges, preferredFps) ?: return@forEach
             val matchedSize = orderedSizes.firstOrNull { size ->
                 hasCompatibleEncoderConfig(size, fpsSelection.frameRate)
@@ -1173,6 +1312,12 @@ class RecorderRepositoryImpl(
         }.distinctBy { it.width to it.height }
     }
 
+    private fun buildPreferredFrameRates(requestedFrameRate: Int) = buildList {
+        add(requestedFrameRate.coerceIn(MIN_CAMERA_FPS, MAX_CAMERA_FPS))
+        add(DEFAULT_CAMERA_FPS)
+        addAll(PREFERRED_FRAME_RATES.asIterable())
+    }.distinct()
+
     private fun choosePreferredFpsSelection(ranges: List<Range<Int>>, preferredFps: Int): FpsSelection? {
         if (ranges.isEmpty()) return null
 
@@ -1211,46 +1356,44 @@ class RecorderRepositoryImpl(
     private fun chooseFallbackFpsSelection(ranges: List<Range<Int>>): FpsSelection {
         if (ranges.isEmpty()) {
             return FpsSelection(
-                range = Range(BASE_FRAME_RATE, BASE_FRAME_RATE),
-                frameRate = BASE_FRAME_RATE,
+                range = Range(DEFAULT_CAMERA_FPS, DEFAULT_CAMERA_FPS),
+                frameRate = DEFAULT_CAMERA_FPS,
             )
         }
 
-        ranges.firstOrNull { it.lower == BASE_FRAME_RATE && it.upper == BASE_FRAME_RATE }?.let { range ->
+        ranges.firstOrNull { it.lower == DEFAULT_CAMERA_FPS && it.upper == DEFAULT_CAMERA_FPS }?.let { range ->
             return FpsSelection(
                 range = range,
-                frameRate = BASE_FRAME_RATE,
+                frameRate = DEFAULT_CAMERA_FPS,
             )
         }
 
-        val fallbackRange = ranges.minByOrNull { abs(it.upper - BASE_FRAME_RATE) } ?: ranges.first()
+        val fallbackRange = ranges.minByOrNull { abs(it.upper - DEFAULT_CAMERA_FPS) } ?: ranges.first()
         return FpsSelection(
             range = fallbackRange,
-            frameRate = fallbackRange.upper.coerceAtMost(BASE_FRAME_RATE),
+            frameRate = fallbackRange.upper.coerceAtMost(DEFAULT_CAMERA_FPS),
         )
     }
 
-    private fun hasCompatibleEncoderConfig(cameraSize: Size, frameRate: Int): Boolean {
-        return videoEncoderInfos.any { codecInfo ->
-            val capabilities = runCatching {
-                codecInfo.getCapabilitiesForType(VIDEO_MIME_TYPE)
-            }.getOrNull() ?: return@any false
+    private fun hasCompatibleEncoderConfig(cameraSize: Size, frameRate: Int) = videoEncoderInfos.any { codecInfo ->
+        val capabilities = runCatching {
+            codecInfo.getCapabilitiesForType(VIDEO_MIME_TYPE)
+        }.getOrNull() ?: return@any false
 
-            val videoCapabilities = capabilities.videoCapabilities ?: return@any false
-            val widthAlignment = maxOf(1, videoCapabilities.widthAlignment)
-            val heightAlignment = maxOf(1, videoCapabilities.heightAlignment)
-            val alignedSize = alignSizeDown(
-                size = cameraSize,
-                widthAlignment = widthAlignment,
-                heightAlignment = heightAlignment,
-            ) ?: return@any false
+        val videoCapabilities = capabilities.videoCapabilities ?: return@any false
+        val widthAlignment = maxOf(1, videoCapabilities.widthAlignment)
+        val heightAlignment = maxOf(1, videoCapabilities.heightAlignment)
+        val alignedSize = alignSizeDown(
+            size = cameraSize,
+            widthAlignment = widthAlignment,
+            heightAlignment = heightAlignment,
+        ) ?: return@any false
 
-            videoCapabilities.areSizeAndRateSupported(
-                alignedSize.width,
-                alignedSize.height,
-                frameRate.toDouble(),
-            )
-        }
+        videoCapabilities.areSizeAndRateSupported(
+            alignedSize.width,
+            alignedSize.height,
+            frameRate.toDouble(),
+        )
     }
 
     private fun chooseVideoBitrate(videoSize: Size): Int {
@@ -1262,7 +1405,7 @@ class RecorderRepositoryImpl(
         }
     }
 
-    private fun recordingFileExtension() = when (ACTIVE_SEGMENT_OUTPUT) {
+    private fun recordingFileExtension(outputMode: SegmentOutputMode) = when (outputMode) {
         SegmentOutputMode.RAW_AVC -> FILE_EXTENSION_AVC
         SegmentOutputMode.MPEG_TS -> FILE_EXTENSION_TS
     }
@@ -1359,26 +1502,24 @@ class RecorderRepositoryImpl(
         return result.toList()
     }
 
-    private fun queryVideoEncoderInfos(): List<MediaCodecInfo> {
-        return MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
-            .asSequence()
-            .filter { it.isEncoder }
-            .filter { codecInfo ->
-                codecInfo.supportedTypes.any { type -> type.equals(VIDEO_MIME_TYPE, ignoreCase = true) }
+    private fun queryVideoEncoderInfos() = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+        .asSequence()
+        .filter { it.isEncoder }
+        .filter { codecInfo ->
+            codecInfo.supportedTypes.any { type -> type.equals(VIDEO_MIME_TYPE, ignoreCase = true) }
+        }
+        .filter { codecInfo -> codecInfo.supportsSurfaceInput(VIDEO_MIME_TYPE) }
+        .sortedWith(
+            compareByDescending<MediaCodecInfo> { codecInfo ->
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && codecInfo.isHardwareAccelerated
+            }.thenBy { codecInfo ->
+                codecInfo.name.startsWith("OMX.google.", ignoreCase = true) ||
+                    codecInfo.name.startsWith("c2.android.", ignoreCase = true)
+            }.thenBy { codecInfo ->
+                codecInfo.name
             }
-            .filter { codecInfo -> codecInfo.supportsSurfaceInput(VIDEO_MIME_TYPE) }
-            .sortedWith(
-                compareByDescending<MediaCodecInfo> { codecInfo ->
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && codecInfo.isHardwareAccelerated
-                }.thenBy { codecInfo ->
-                    codecInfo.name.startsWith("OMX.google.", ignoreCase = true) ||
-                        codecInfo.name.startsWith("c2.android.", ignoreCase = true)
-                }.thenBy { codecInfo ->
-                    codecInfo.name
-                }
-            )
-            .toList()
-    }
+        )
+        .toList()
 
     private fun buildRequestedEncoderSizes(cameraSize: Size): List<Size> {
         val preferredSizes = PREFERRED_VIDEO_SIZES
@@ -1417,7 +1558,13 @@ class RecorderRepositoryImpl(
 
                 val orderedPreviewSizes = configurationMap?.let { orderVideoSizes(collectPreviewSizes(it)) }.orEmpty()
                 val orderedVideoSizes = configurationMap?.let { orderVideoSizes(collectVideoSizes(it)) }.orEmpty()
-                val recordingProfile = configurationMap?.let { resolveRecordingProfile(characteristics, it) }
+                val recordingProfile = configurationMap?.let {
+                    resolveRecordingProfile(
+                        characteristics = characteristics,
+                        configurationMap = it,
+                        requestedFrameRate = DEFAULT_CAMERA_FPS,
+                    )
+                }
                 val activeArray = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
                 val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
                     ?.toList()
@@ -1464,36 +1611,30 @@ class RecorderRepositoryImpl(
         }
     }
 
-    private fun collectPreviewSizes(configurationMap: StreamConfigurationMap): List<Size> {
-        return buildList {
-            addAll(
-                runCatching { configurationMap.getOutputSizes(SurfaceTexture::class.java) }
-                    .getOrNull()
-                    .orEmpty()
-                    .asList()
-            )
-            addAll(
-                runCatching { configurationMap.getOutputSizes(Surface::class.java) }
-                    .getOrNull()
-                    .orEmpty()
-                    .asList()
-            )
-        }.distinctBy { it.width to it.height }
-    }
-
-    private fun Size.toAvailableCameraSize(): AvailableCameraSize {
-        return AvailableCameraSize(
-            width = width,
-            height = height,
+    private fun collectPreviewSizes(configurationMap: StreamConfigurationMap) = buildList {
+        addAll(
+            runCatching { configurationMap.getOutputSizes(SurfaceTexture::class.java) }
+                .getOrNull()
+                .orEmpty()
+                .asList()
         )
-    }
-
-    private fun Range<Int>.toAvailableCameraFpsRange(): AvailableCameraFpsRange {
-        return AvailableCameraFpsRange(
-            min = lower,
-            max = upper,
+        addAll(
+            runCatching { configurationMap.getOutputSizes(Surface::class.java) }
+                .getOrNull()
+                .orEmpty()
+                .asList()
         )
-    }
+    }.distinctBy { it.width to it.height }
+
+    private fun Size.toAvailableCameraSize() = AvailableCameraSize(
+        width = width,
+        height = height,
+    )
+
+    private fun Range<Int>.toAvailableCameraFpsRange() = AvailableCameraFpsRange(
+        min = lower,
+        max = upper,
+    )
 
     override val hasCameraPermission: Boolean
         get() = ContextCompat.checkSelfPermission(

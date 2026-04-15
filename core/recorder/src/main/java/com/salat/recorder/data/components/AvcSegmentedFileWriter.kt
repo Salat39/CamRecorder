@@ -15,17 +15,20 @@ internal class AvcSegmentedFileWriter(
     private val brokenFileDeleteThresholdBytes: Long,
     private val ioBufferBytes: Int,
     private val syncOnSegmentClose: Boolean,
+    declaredFrameRate: Int,
 ) : SegmentedVideoFileWriter {
     private companion object {
         private val ANNEX_B_START_CODE = byteArrayOf(0x00, 0x00, 0x00, 0x01)
         private const val DEFAULT_NAL_LENGTH_FIELD_BYTES = 4
         private const val NO_BYTES_WRITTEN = -1
+        private const val INDEX_BUFFER_BYTES = 16 * 1_024
     }
 
     private var activeFile: File? = null
     private var activeFileStream: FileOutputStream? = null
     private var activeOutput: BufferedOutputStream? = null
     private var activeSegmentNeedsCodecConfig = false
+    private var activeFileBytesWritten = 0L
 
     private var pendingFile: File? = null
     private var codecConfigBytes: ByteArray? = null
@@ -33,6 +36,11 @@ internal class AvcSegmentedFileWriter(
 
     private var sampleScratch = ByteArray(0)
     private var annexBScratch = ByteArray(0)
+    private val indexWriter = AvcSegmentIndexWriter(
+        ioBufferBytes = minOf(ioBufferBytes, INDEX_BUFFER_BYTES),
+        syncOnSegmentClose = syncOnSegmentClose,
+        declaredFrameRate = declaredFrameRate,
+    )
 
     @Synchronized
     override fun onOutputFormatChanged(format: MediaFormat) {
@@ -76,10 +84,27 @@ internal class AvcSegmentedFileWriter(
 
         val output = activeOutput ?: return
         if (activeSegmentNeedsCodecConfig) {
-            codecConfigBytes?.let { output.write(it) }
+            codecConfigBytes?.let { codecConfig ->
+                val codecOffset = activeFileBytesWritten
+                output.write(codecConfig)
+                activeFileBytesWritten += codecConfig.size
+                indexWriter.appendCodecConfig(
+                    fileOffset = codecOffset,
+                    sampleSize = codecConfig.size,
+                )
+            }
             activeSegmentNeedsCodecConfig = false
         }
+
+        val sampleOffset = activeFileBytesWritten
         output.write(normalized.bytes, 0, normalized.length)
+        activeFileBytesWritten += normalized.length
+        indexWriter.appendSample(
+            fileOffset = sampleOffset,
+            sampleSize = normalized.length,
+            presentationTimeUs = bufferInfo.presentationTimeUs,
+            keyFrame = keyFrame,
+        )
     }
 
     @Synchronized
@@ -118,7 +143,9 @@ internal class AvcSegmentedFileWriter(
         activeFile = nextFile
         activeFileStream = fileStream
         activeOutput = BufferedOutputStream(fileStream, ioBufferBytes)
+        indexWriter.open(indexFileFor(nextFile))
         activeSegmentNeedsCodecConfig = true
+        activeFileBytesWritten = 0L
     }
 
     private fun readSampleBytes(buffer: ByteBuffer, bufferInfo: MediaCodec.BufferInfo): Int {
@@ -260,6 +287,8 @@ internal class AvcSegmentedFileWriter(
         runCatching { output?.close() }
         runCatching { fileStream?.close() }
         activeFile = null
+        activeFileBytesWritten = 0L
+        indexWriter.close()
     }
 
     private fun ensureSampleScratchCapacity(size: Int) {
@@ -285,10 +314,29 @@ internal class AvcSegmentedFileWriter(
     }
 
     private fun deleteIfBroken(file: File?) {
-        if (file == null || !file.exists()) return
+        if (file == null) return
+        if (!file.exists()) {
+            deleteSidecar(file)
+            return
+        }
         if (file.length() > brokenFileDeleteThresholdBytes) return
-        runCatching { file.delete() }
+        val deleted = runCatching { file.delete() }
             .onFailure { Timber.w(it, "Failed to delete broken segment: %s", file.absolutePath) }
+            .getOrDefault(false)
+        if (deleted || !file.exists()) {
+            deleteSidecar(file)
+        }
+    }
+
+    private fun deleteSidecar(file: File) {
+        val sidecar = indexFileFor(file)
+        if (!sidecar.exists()) return
+        runCatching { sidecar.delete() }
+            .onFailure { Timber.w(it, "Failed to delete broken sidecar: %s", sidecar.absolutePath) }
+    }
+
+    private fun indexFileFor(file: File): File {
+        return File(file.parentFile, file.name + ".idx")
     }
 
     private fun ByteBuffer.toByteArray(): ByteArray {

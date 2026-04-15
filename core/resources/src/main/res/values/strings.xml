@@ -17,4 +17,45 @@
     <string name="preview_switch_ignition_subtitle_ignition_only">Only when ignition is on</string>
     <string name="preview_switch_ignition_subtitle_always">Independent of ignition</string>
     <string name="available_cameras">Available cameras</string>
+    <string name="settings_screen_title">Settings</string>
+    <string name="archive_screen_title">Recording archive</string>
+    <string name="archive_empty_message">No archived recordings yet</string>
+    <string name="browse_saved_clips">Browse saved clips and events</string>
+
+    <string name="archive_camera_left">Left</string>
+    <string name="archive_camera_right">Right</string>
+    <string name="archive_camera_front">Front</string>
+    <string name="archive_camera_back">Back</string>
+
+    <string name="archive_segment_dialog_title">Segment details</string>
+    <string name="archive_segment_dialog_camera">Camera: %1$s</string>
+    <string name="archive_segment_dialog_time">Time: %1$s – %2$s</string>
+    <string name="archive_segment_dialog_files">Files: %1$d</string>
+    <string name="archive_dialog_close">Close</string>
+
+    <string name="settings_camera_permission_required">Grant camera permission to configure cameras.</string>
+    <string name="settings_no_cameras_found">No cameras found</string>
+    <string name="settings_camera_recording_title">Recording</string>
+    <string name="settings_camera_recording_on">Enabled</string>
+    <string name="settings_camera_recording_off">Disabled</string>
+    <string name="settings_camera_format_title">Format</string>
+    <string name="settings_camera_fps">FPS: %1$d</string>
+    <string name="settings_camera_left">Left camera</string>
+    <string name="settings_camera_right">Right camera</string>
+    <string name="settings_camera_front">Front camera</string>
+    <string name="settings_camera_rear">Rear camera</string>
+    <string name="settings_camera_generic">Camera %1$s</string>
+    <string name="content_description_back">Back</string>
+    <string name="all_cameras_disabled">All cameras disabled</string>
+
+    <string name="preview_cd_toggle_preview">Toggle preview visibility</string>
+    <string name="preview_cd_camera_info">Camera information</string>
+    <string name="preview_cd_status">Status</string>
+
+    <string name="settings_general_title">General</string>
+    <string name="settings_segment_duration_minutes">Segment length: %1$d min</string>
+    <string name="settings_segment_duration_seconds">Segment length: %1$d sec</string>
+
+    <string name="settings_camera_format_avc" translatable="false">AVC</string>
+    <string name="settings_camera_format_ts" translatable="false">TS</string>
 </resources>

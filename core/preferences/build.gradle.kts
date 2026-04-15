@@ -11,6 +11,8 @@ android {
 }
 
 dependencies {
+    implementation(project(Modules.CORE_COMMON_CONST))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.datastore.core)

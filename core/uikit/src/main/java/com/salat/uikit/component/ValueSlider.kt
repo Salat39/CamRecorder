@@ -150,8 +150,12 @@ fun <T> ValueSlider(
 
                 val convertedValue = when (value) {
                     is Int -> snappedValue.toInt() as T
+                    is Long -> snappedValue.toLong() as T
+                    is Float -> snappedValue as T
                     is Double -> snappedValue.toDouble() as T
-                    else -> snappedValue as T
+                    is Short -> snappedValue.toInt().toShort() as T
+                    is Byte -> snappedValue.toInt().toByte() as T
+                    else -> error("Unsupported slider value type: ${value::class}")
                 }
                 onValueChange(convertedValue)
             },

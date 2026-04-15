@@ -24,8 +24,8 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.rememberNavController
-import com.salat.camrec.BuildConfig
 import com.salat.camrec.presentation.splash.pulseAnimation
+import com.salat.commonconst.UI_SCALE
 import com.salat.navigation.mainGraph
 import com.salat.navigation.routs.MainNavGraph
 import com.salat.navigation.transitions.routedEnterTransition
@@ -58,10 +58,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             val density = LocalDensity.current
-            val scaledDensity = remember(density, BuildConfig.UI_SCALE) {
+            val scaledDensity = remember(density, UI_SCALE) {
                 Density(
-                    density.density * BuildConfig.UI_SCALE,
-                    density.fontScale * BuildConfig.UI_SCALE
+                    density.density * UI_SCALE,
+                    density.fontScale * UI_SCALE
                 )
             }
 

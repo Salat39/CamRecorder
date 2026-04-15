@@ -54,5 +54,11 @@ val ktlintFormat by tasks.register<JavaExec>("ktlintFormat") {
     )
 }
 
+val enableLint: Provider<Boolean> = providers.gradleProperty("enable_lint")
+    .map(String::toBoolean)
+    .orElse(false)
+
 // Auto code style formatting (by every build)
-ktlintFormat.exec()
+if (enableLint.get()) {
+    ktlintFormat.exec()
+}

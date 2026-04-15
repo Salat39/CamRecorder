@@ -32,7 +32,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -66,6 +70,8 @@ import com.salat.preview.presentation.mappers.buildCameraConfigInfo
 import com.salat.resources.R
 import com.salat.ui.clickableNoRipple
 import com.salat.ui.rememberHasManageAllFilesAccess
+import com.salat.ui.rememberTimeLockedBoolean
+import com.salat.uikit.component.RenderSettingsButton
 import com.salat.uikit.component.RenderSwitcher
 import com.salat.uikit.component.TopShadow
 import com.salat.uikit.preview.PreviewScreen
@@ -77,296 +83,311 @@ private const val BLOCKS_PADDING = 20
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
-internal fun PreviewMainScreen(state: PreviewViewModel.ViewState, sendAction: (PreviewViewModel.Action) -> Unit = {}) =
-    Scaffold { innerPadding ->
-        val context = LocalContext.current
-        val gridState = rememberLazyGridState()
-        val border = remember { RoundedCornerShape(16.dp) }
-        val aspect = remember { 1280f / 800f }
-        BackHandler { context.getActivity()?.moveTaskToBack(true) }
+internal fun PreviewMainScreen(
+    state: PreviewViewModel.ViewState,
+    sendAction: (PreviewViewModel.Action) -> Unit = {},
+    onOpenArchive: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}
+) = Scaffold { innerPadding ->
+    val context = LocalContext.current
+    val gridState = rememberLazyGridState()
+    var clickLock by rememberTimeLockedBoolean()
+    val border = remember { RoundedCornerShape(16.dp) }
+    val aspect = remember { 1280f / 800f }
+    BackHandler { context.getActivity()?.moveTaskToBack(true) }
 
-        val fileAccess = rememberHasManageAllFilesAccess()
-        var cameraAccess by remember { mutableStateOf(context.hasCameraPermission()) }
+    val fileAccess = rememberHasManageAllFilesAccess()
+    var cameraAccess by remember { mutableStateOf(context.hasCameraPermission()) }
 
-        val requestPermissionLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.RequestPermission()
-        ) { isGranted ->
-            cameraAccess = isGranted
-            if (isGranted) sendAction(PreviewViewModel.Action.GetCamerasInfo)
+    val requestPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        cameraAccess = isGranted
+        if (isGranted) sendAction(PreviewViewModel.Action.GetCamerasInfo)
+    }
+
+    LaunchedEffect(fileAccess) {
+        if (fileAccess) {
+            sendAction(PreviewViewModel.Action.RefreshDriveConnected)
         }
+    }
 
-        LaunchedEffect(fileAccess) {
-            if (fileAccess) {
-                sendAction(PreviewViewModel.Action.RefreshDriveConnected)
-            }
-        }
-
-        val enableRecord = state.enableRecord ?: false
-        val forceRecord = state.forceRecord ?: false
-        val hasAccess = fileAccess && state.driveConnected && cameraAccess
-        val recStatus = if (!hasAccess) {
-            ActionStatus.WAITING_ACTION
-        } else {
-            if (enableRecord) {
-                if (state.ignition || forceRecord) {
-                    ActionStatus.CAN_STOP
-                } else {
-                    ActionStatus.WAITING_IGNITION
-                }
+    val enableRecord = state.enableRecord ?: false
+    val forceRecord = state.forceRecord ?: false
+    val hasAccess = fileAccess && state.driveConnected && cameraAccess && !state.allCamerasDiable
+    val recStatus = if (!hasAccess) {
+        ActionStatus.WAITING_ACTION
+    } else {
+        if (enableRecord) {
+            if (state.ignition || forceRecord) {
+                ActionStatus.CAN_STOP
             } else {
-                ActionStatus.CAN_START
+                ActionStatus.WAITING_IGNITION
             }
+        } else {
+            ActionStatus.CAN_START
+        }
+    }
+
+    val previewsBlocked = recStatus == ActionStatus.CAN_STOP
+
+    val onEnable = rememberUpdatedState {
+        if (!fileAccess) {
+            context.openManageAllFilesAccessSettings()
+            return@rememberUpdatedState
+        }
+        if (!cameraAccess) {
+            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+            return@rememberUpdatedState
+        }
+        if (state.allCamerasDiable) {
+            onOpenSettings()
+            return@rememberUpdatedState
         }
 
-        val previewsBlocked = recStatus == ActionStatus.CAN_STOP
-
-        val onEnable = rememberUpdatedState {
-            if (!fileAccess) {
-                context.openManageAllFilesAccessSettings()
-                return@rememberUpdatedState
-            }
-            if (!cameraAccess) {
-                requestPermissionLauncher.launch(Manifest.permission.CAMERA)
-                return@rememberUpdatedState
-            }
-
-            if (!state.accessibilityServiceEnabled) {
-                openAccessibilityServiceSettings(context)
-                return@rememberUpdatedState
-            }
-
-            when (recStatus) {
-                ActionStatus.WAITING_ACTION -> Unit
-
-                ActionStatus.WAITING_IGNITION, ActionStatus.CAN_STOP -> sendAction(
-                    PreviewViewModel.Action.SetEnableRec(false)
-                )
-
-                ActionStatus.CAN_START -> {
-                    sendAction(PreviewViewModel.Action.HideAllCameraPreviews)
-                    sendAction(PreviewViewModel.Action.SetEnableRec(true))
-                }
-            }
+        if (!state.accessibilityServiceEnabled) {
+            openAccessibilityServiceSettings(context)
+            return@rememberUpdatedState
         }
 
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
+        when (recStatus) {
+            ActionStatus.WAITING_ACTION -> Unit
+
+            ActionStatus.WAITING_IGNITION, ActionStatus.CAN_STOP -> sendAction(
+                PreviewViewModel.Action.SetEnableRec(false)
+            )
+
+            ActionStatus.CAN_START -> sendAction(PreviewViewModel.Action.LaunchRec)
+        }
+    }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .fillMaxSize()
+            .background(AppTheme.colors.surfaceBackground)
+            .padding(innerPadding)
+            .consumeWindowInsets(innerPadding)
+            .systemBarsPadding()
+            .imePadding()
+    ) {
+        // Toolbar
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .background(AppTheme.colors.surfaceBackground)
-                .padding(innerPadding)
-                .consumeWindowInsets(innerPadding)
-                .systemBarsPadding()
-                .imePadding()
+                .fillMaxWidth()
+                .height(56.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Toolbar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Spacer(Modifier.width(24.dp))
-                Text(
-                    text = stringResource(R.string.app_label),
-                    modifier = Modifier.weight(1f, false),
-                    color = AppTheme.colors.contentPrimary,
-                    style = AppTheme.typography.toolbar,
-                    overflow = TextOverflow.Ellipsis,
-                    maxLines = 1
+            Spacer(Modifier.width(36.dp))
+            Text(
+                text = stringResource(R.string.app_label),
+                modifier = Modifier.weight(1f),
+                color = AppTheme.colors.contentPrimary,
+                style = AppTheme.typography.toolbar,
+                overflow = TextOverflow.Ellipsis,
+                maxLines = 1
+            )
+
+            IconButton(onClick = onOpenSettings) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = stringResource(R.string.settings_screen_title),
+                    tint = AppTheme.colors.contentPrimary
                 )
-
-                Spacer(Modifier.width(10.dp))
             }
+            Spacer(Modifier.width(24.dp))
+        }
 
-            BoxWithConstraints(
-                modifier = Modifier
-                    .weight(1f)
-                    .background(AppTheme.colors.surfaceSettings)
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .background(AppTheme.colors.surfaceSettings)
+        ) {
+            val minCardWidth = 320.dp
+            val isWideLayout = maxWidth >= minCardWidth * 2 + BLOCKS_PADDING.dp
+
+            TopShadow()
+
+            LazyVerticalGrid(
+                modifier = Modifier.fillMaxSize(),
+                state = gridState,
+                columns = GridCells.Fixed(if (isWideLayout) 2 else 1),
+                contentPadding = PaddingValues(BLOCKS_PADDING.dp),
+                verticalArrangement = Arrangement.spacedBy(BLOCKS_PADDING.dp),
+                horizontalArrangement = Arrangement.spacedBy(BLOCKS_PADDING.dp)
             ) {
-                val minCardWidth = 320.dp
-                val isWideLayout = maxWidth >= minCardWidth * 2 + BLOCKS_PADDING.dp
-
-                TopShadow()
-
-                LazyVerticalGrid(
-                    modifier = Modifier.fillMaxSize(),
-                    state = gridState,
-                    columns = GridCells.Fixed(if (isWideLayout) 2 else 1),
-                    contentPadding = PaddingValues(BLOCKS_PADDING.dp),
-                    verticalArrangement = Arrangement.spacedBy(BLOCKS_PADDING.dp),
-                    horizontalArrangement = Arrangement.spacedBy(BLOCKS_PADDING.dp)
+                item(
+                    key = -1,
+                    span = { GridItemSpan(maxLineSpan) }
                 ) {
-                    item(
-                        key = -1,
-                        span = { GridItemSpan(maxLineSpan) }
-                    ) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            PreviewCardsLayout(
-                                isWideLayout = isWideLayout,
-                                firstCard = { cardModifier ->
-                                    Row(
-                                        modifier = cardModifier
-                                            .shadow(4.dp, shape = border)
-                                            .background(AppTheme.colors.surfaceSettingsLayer1)
-                                            .clickableNoRipple(onClick = onEnable.value),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Spacer(Modifier.width(8.dp))
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        PreviewCardsLayout(
+                            isWideLayout = isWideLayout,
+                            firstCard = { cardModifier ->
+                                Row(
+                                    modifier = cardModifier
+                                        .shadow(4.dp, shape = border)
+                                        .background(AppTheme.colors.surfaceSettingsLayer1)
+                                        .clickableNoRipple(onClick = onEnable.value),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Spacer(Modifier.width(8.dp))
 
-                                        RecordingIndicator(
-                                            size = 76.dp,
-                                            showLabel = false,
-                                            state = when (recStatus) {
-                                                ActionStatus.WAITING_ACTION -> RecordingIndicatorState.WARNING
-                                                ActionStatus.WAITING_IGNITION -> RecordingIndicatorState.READY
-                                                ActionStatus.CAN_START -> RecordingIndicatorState.DISABLED
-                                                ActionStatus.CAN_STOP -> RecordingIndicatorState.REC
+                                    RecordingIndicator(
+                                        size = 76.dp,
+                                        showLabel = false,
+                                        state = when (recStatus) {
+                                            ActionStatus.WAITING_ACTION -> RecordingIndicatorState.WARNING
+                                            ActionStatus.WAITING_IGNITION -> RecordingIndicatorState.READY
+                                            ActionStatus.CAN_START -> RecordingIndicatorState.DISABLED
+                                            ActionStatus.CAN_STOP -> RecordingIndicatorState.REC
+                                        },
+                                        glowIntensity = .6f,
+                                        pulseScaleIntensity = .3f,
+                                        centerHighlightIntensity = .9f
+                                    )
+
+                                    Spacer(Modifier.width(2.dp))
+
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = when (recStatus) {
+                                                ActionStatus.WAITING_ACTION -> stringResource(
+                                                    R.string.preview_status_waiting_action
+                                                )
+
+                                                ActionStatus.WAITING_IGNITION -> stringResource(
+                                                    R.string.preview_status_waiting_ignition
+                                                )
+
+                                                ActionStatus.CAN_START -> stringResource(
+                                                    R.string.preview_status_off
+                                                )
+
+                                                ActionStatus.CAN_STOP -> stringResource(
+                                                    R.string.preview_status_recording
+                                                )
                                             },
-                                            glowIntensity = .6f,
-                                            pulseScaleIntensity = .3f,
-                                            centerHighlightIntensity = .9f
+                                            style = AppTheme.typography.previewTitle,
+                                            color = AppTheme.colors.contentPrimary
                                         )
 
-                                        Spacer(Modifier.width(2.dp))
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            if (!fileAccess) {
+                                                RenderStatusWarning(
+                                                    text = stringResource(R.string.preview_warning_no_file_access),
+                                                    type = WarningStatus.ERROR
+                                                )
+                                            } else if (!state.driveConnected) {
+                                                RenderStatusWarning(
+                                                    text = stringResource(R.string.preview_warning_insert_usb),
+                                                    type = WarningStatus.WARNING
+                                                )
+                                            }
 
-                                        Column(
-                                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                text = when (recStatus) {
-                                                    ActionStatus.WAITING_ACTION -> stringResource(
-                                                        R.string.preview_status_waiting_action
-                                                    )
+                                            if (!cameraAccess) {
+                                                RenderStatusWarning(
+                                                    text = stringResource(R.string.preview_warning_no_camera_access),
+                                                    type = WarningStatus.ERROR
+                                                )
+                                            } else if (state.allCamerasDiable) {
+                                                RenderStatusWarning(
+                                                    text = stringResource(R.string.all_cameras_disabled),
+                                                    type = WarningStatus.WARNING
+                                                )
+                                            }
 
-                                                    ActionStatus.WAITING_IGNITION -> stringResource(
-                                                        R.string.preview_status_waiting_ignition
-                                                    )
-
-                                                    ActionStatus.CAN_START -> stringResource(
-                                                        R.string.preview_status_off
-                                                    )
-
-                                                    ActionStatus.CAN_STOP -> stringResource(
-                                                        R.string.preview_status_recording
-                                                    )
-                                                },
-                                                style = AppTheme.typography.previewTitle,
-                                                color = AppTheme.colors.contentPrimary
-                                            )
-
-                                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                                if (!fileAccess) {
-                                                    RenderStatusWarning(
-                                                        text = stringResource(R.string.preview_warning_no_file_access),
-                                                        type = WarningStatus.ERROR
-                                                    )
-                                                } else if (!state.driveConnected) {
-                                                    RenderStatusWarning(
-                                                        text = stringResource(R.string.preview_warning_insert_usb),
-                                                        type = WarningStatus.WARNING
-                                                    )
-                                                }
-
-                                                if (!cameraAccess) {
-                                                    RenderStatusWarning(
-                                                        text = stringResource(
-                                                            R.string.preview_warning_no_camera_access
-                                                        ),
-                                                        type = WarningStatus.ERROR
-                                                    )
-                                                }
-
-                                                if (!state.accessibilityServiceEnabled) {
-                                                    RenderStatusWarning(
-                                                        text = stringResource(
-                                                            R.string.preview_warning_no_accessibility_service
-                                                        ),
-                                                        type = WarningStatus.WARNING
-                                                    )
-                                                }
+                                            if (!state.accessibilityServiceEnabled) {
+                                                RenderStatusWarning(
+                                                    text = stringResource(
+                                                        R.string.preview_warning_no_accessibility_service
+                                                    ),
+                                                    type = WarningStatus.WARNING
+                                                )
                                             }
                                         }
-
-                                        Spacer(Modifier.width(16.dp))
                                     }
-                                },
-                                secondCard = { cardModifier ->
-                                    Column(
-                                        modifier = cardModifier
-                                            .shadow(4.dp, shape = border)
-                                            .background(AppTheme.colors.surfaceSettingsLayer1)
-                                            .padding(vertical = 8.dp)
-                                    ) {
-                                        RenderSwitcher(
-                                            title = stringResource(R.string.preview_switch_enable_title),
-                                            subtitle = if (enableRecord) {
-                                                stringResource(R.string.preview_switch_enable_subtitle_on)
-                                            } else {
-                                                stringResource(R.string.preview_switch_enable_subtitle_off)
-                                            },
-                                            groupDivider = false,
-                                            value = state.enableRecord,
-                                            onChange = { _ -> onEnable.value.invoke() }
-                                        )
 
-                                        RenderSwitcher(
-                                            title = stringResource(R.string.preview_switch_ignition_title),
-                                            subtitle = if (!forceRecord) {
-                                                stringResource(R.string.preview_switch_ignition_subtitle_ignition_only)
-                                            } else {
-                                                stringResource(R.string.preview_switch_ignition_subtitle_always)
-                                            },
-                                            groupDivider = false,
-                                            value = state.forceRecord?.let { !it },
-                                            onChange = { isEnabled ->
-                                                sendAction(PreviewViewModel.Action.SetForceRecord(!isEnabled))
-                                            }
-                                        )
+                                    Spacer(Modifier.width(16.dp))
+                                }
+                            },
+                            secondCard = { cardModifier ->
+                                Column(
+                                    modifier = cardModifier
+                                        .shadow(4.dp, shape = border)
+                                        .background(AppTheme.colors.surfaceSettingsLayer1)
+                                        .padding(vertical = 8.dp)
+                                ) {
+                                    RenderSwitcher(
+                                        title = stringResource(R.string.preview_switch_enable_title),
+                                        subtitle = if (enableRecord) {
+                                            stringResource(R.string.preview_switch_enable_subtitle_on)
+                                        } else {
+                                            stringResource(R.string.preview_switch_enable_subtitle_off)
+                                        },
+                                        groupDivider = false,
+                                        value = state.enableRecord,
+                                        onChange = { _ -> onEnable.value.invoke() }
+                                    )
+
+                                    RenderSettingsButton(
+                                        title = stringResource(R.string.archive_screen_title),
+                                        subtitle = stringResource(R.string.browse_saved_clips),
+                                    ) {
+                                        if (clickLock) return@RenderSettingsButton
+                                        clickLock = true
+                                        onOpenArchive()
                                     }
                                 }
+                            }
+                        )
+
+                        if (state.cameras.isNotEmpty()) {
+                            Spacer(Modifier.height(32.dp))
+
+                            Text(
+                                modifier = Modifier.fillMaxWidth(),
+                                text = stringResource(R.string.available_cameras),
+                                textAlign = TextAlign.Center,
+                                style = AppTheme.typography.previewTitle,
+                                color = AppTheme.colors.contentPrimary.copy(.9f)
                             )
 
-                            if (state.cameras.isNotEmpty()) {
-                                Spacer(Modifier.height(32.dp))
-
-                                Text(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    text = stringResource(R.string.available_cameras),
-                                    textAlign = TextAlign.Center,
-                                    style = AppTheme.typography.previewTitle,
-                                    color = AppTheme.colors.contentPrimary.copy(.9f)
-                                )
-
-                                Spacer(Modifier.height(8.dp))
-                            }
+                            Spacer(Modifier.height(8.dp))
                         }
                     }
-                    items(
-                        items = state.cameras,
-                        key = { item -> item.cameraId }
-                    ) { camera ->
-                        val cameraConfigInfo = remember(camera) { buildCameraConfigInfo(camera) }
+                }
+                items(
+                    items = state.cameras,
+                    key = { item -> item.cameraId }
+                ) { camera ->
+                    val cameraConfigInfo = remember(camera) { buildCameraConfigInfo(camera) }
 
-                        Box(
+                    Box(
+                        modifier = Modifier
+                            .aspectRatio(aspect)
+                            .shadow(4.dp, shape = border)
+                            .background(AppTheme.colors.surfaceSettingsLayer1)
+                    ) {
+                        if (camera.showPreview && !previewsBlocked && cameraAccess) {
+                            CameraPreviewView(
+                                modifier = Modifier.fillMaxSize(),
+                                cameraId = camera.cameraId,
+                                previewSize = camera.defaultPreviewSize ?: camera.defaultVideoSize,
+                                enabled = true,
+                            )
+                        }
+
+                        Column(
                             modifier = Modifier
-                                .aspectRatio(aspect)
-                                .shadow(4.dp, shape = border)
-                                .background(AppTheme.colors.surfaceSettingsLayer1)
+                                .align(Alignment.TopEnd)
+                                .padding(end = 16.dp, top = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            if (camera.showPreview && !previewsBlocked && cameraAccess) {
-                                CameraPreviewView(
-                                    modifier = Modifier.fillMaxSize(),
-                                    cameraId = camera.cameraId,
-                                    previewSize = camera.defaultPreviewSize ?: camera.defaultVideoSize,
-                                    enabled = true,
-                                )
-                            }
-
                             Box(
                                 modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(end = 16.dp, top = 16.dp)
                                     .size(36.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(
@@ -385,11 +406,36 @@ internal fun PreviewMainScreen(state: PreviewViewModel.ViewState, sendAction: (P
                                         .size(23.dp),
                                     painter = painterResource(R.drawable.ic_eye),
                                     tint = AppTheme.colors.contentPrimary,
-                                    contentDescription = "vis"
+                                    contentDescription = stringResource(R.string.preview_cd_toggle_preview)
                                 )
                             }
 
-                            // Info
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (camera.showInfo) {
+                                            AppTheme.colors.autoStart
+                                        } else AppTheme.colors.surfaceMenu
+                                    )
+                                    .clickable {
+                                        sendAction(PreviewViewModel.Action.ToggleCameraInfo(camera.cameraId))
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    modifier = Modifier
+                                        .size(22.dp),
+                                    imageVector = Icons.Default.Info,
+                                    tint = AppTheme.colors.contentPrimary,
+                                    contentDescription = stringResource(R.string.preview_cd_camera_info)
+                                )
+                            }
+                        }
+
+                        // Info
+                        if (camera.showInfo) {
                             Text(
                                 modifier = Modifier
                                     .padding(start = 16.dp, top = 16.dp)
@@ -402,16 +448,17 @@ internal fun PreviewMainScreen(state: PreviewViewModel.ViewState, sendAction: (P
                             )
                         }
                     }
-                    item(
-                        key = -2,
-                        span = { GridItemSpan(maxLineSpan) }
-                    ) {
-                        Spacer(Modifier.height(48.dp))
-                    }
+                }
+                item(
+                    key = -2,
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
+                    Spacer(Modifier.height(48.dp))
                 }
             }
         }
     }
+}
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
